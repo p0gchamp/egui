@@ -1,0 +1,26 @@
+[package]
+name = "egui_grr"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+grr = "0.8.0"
+bytemuck = "1.7.0"
+ahash = "0.7.6"
+egui = { version = "0.16.0", path = "../egui", default-features = false, features = [
+    "convert_bytemuck",
+    "single_threaded",
+] }
+epi = { version = "0.16.0", path = "../epi", optional = true }
+egui-winit = { version = "0.16.0", path = "../egui-winit", default-features = false, features = ["epi"] }
+winit = "0.26.1"
+anyhow = "1.0.53"
+image = { version = "0.23", default-features = false, features = ["png"] }
+raw-gl-context = "0.1.2"
+
+[features]
+default = ["default_fonts"]
+
+default_fonts = ["egui/default_fonts"]

@@ -11,6 +11,7 @@ members = [
     "emath",
     "epaint",
     "epi",
+    "egui_grr"
 ]
 
 [profile.dev]
