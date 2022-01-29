@@ -1,4 +1,4 @@
-use crate::painter::Painter;
+use crate::painter::{Painter, PainterSettings};
 use egui_winit::*;
 
 mod painter;
@@ -14,7 +14,7 @@ pub struct EguiGrr {
 
 impl EguiGrr {
     pub fn new(window: &winit::window::Window, grr: &grr::Device) -> Self {
-        let painter = Painter::new(grr);
+        let painter = Painter::new(grr, Default::default());
 
         Self {
             egui_ctx: Default::default(),

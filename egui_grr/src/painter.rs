@@ -1,7 +1,7 @@
 use std::ffi::CString;
 use std::io::Read;
 use std::os::unix::raw::dev_t;
-use grr::{BaseFormat, BlendChannel, BlendFactor, BlendOp, BufferRange, ColorBlend, ColorBlendAttachment, Compare, Constant, Extent, Filter, Format, FormatLayout, HostImageCopy, ImageCopy, ImageType, ImageViewType, MemoryFlags, MemoryLayout, Offset, PipelineFlags, Region, SamplerAddress, SamplerDesc, ShaderFlags, SubresourceLayers, SubresourceRange, VertexAttributeDesc, VertexBufferView, Viewport};
+use grr::{BaseFormat, BlendChannel, BlendFactor, BlendOp, BufferRange, ColorBlend, ColorBlendAttachment, Compare, Constant, Extent, Filter, Format, FormatLayout, HostImageCopy, ImageCopy, ImageType, ImageView, ImageViewType, MemoryFlags, MemoryLayout, Offset, PipelineFlags, Region, SamplerAddress, SamplerDesc, ShaderFlags, ShaderSource, ShaderStage, SubresourceLayers, SubresourceRange, VertexAttributeDesc, VertexBufferView, Viewport};
 use grr::Primitive::Triangles;
 use {
     ahash::AHashMap,
@@ -12,14 +12,31 @@ use egui::epaint;
 
 pub struct Painter {
     max_texture_side: usize,
+    ibo : grr::Buffer,
+    vbo : grr::Buffer,
+    sampler : grr::Sampler,
     pub(crate) pipeline: grr::Pipeline,
     pub(crate) vertex_array: grr::VertexArray,
 
     pub(crate) textures: AHashMap<egui::TextureId, grr::Image>,
 }
+#[derive(Copy, Clone, Debug)]
+pub struct PainterSettings{
+    pub ibo_size : u64,
+    pub vbo_size : u64
+}
+
+impl std::default::Default for PainterSettings {
+    fn default() -> Self {
+        Self{
+            ibo_size: 2048,
+            vbo_size: 4096
+        }
+    }
+}
 
 impl Painter {
-    pub fn new(device: &grr::Device) -> Painter {
+    pub fn new(device: &grr::Device, settings : PainterSettings) -> Painter {
         let max_texture_side = 4096;
 
         let vertex_array = unsafe {
@@ -44,15 +61,23 @@ impl Painter {
             vao
         };
 
+        let vbo = unsafe{
+            device.create_buffer(settings.vbo_size, MemoryFlags::DYNAMIC)
+        }.unwrap();
+
+        let ibo = unsafe {
+            device.create_buffer(settings.ibo_size, MemoryFlags::DYNAMIC)
+        }.unwrap();
+
         let vertex_shader = unsafe {
             let bytes = include_bytes!("shader/egui_vertex.glsl");
-            device.create_shader(grr::ShaderStage::Vertex, bytes, ShaderFlags::VERBOSE)
+            device.create_shader(grr::ShaderStage::Vertex, ShaderSource::Glsl, bytes, ShaderFlags::VERBOSE)
         }
             .expect("Failed to compile shader");
 
         let fragment_shader = unsafe {
             let bytes = include_bytes!("shader/egui_fragment.glsl");
-            device.create_shader(grr::ShaderStage::Fragment, bytes, ShaderFlags::VERBOSE)
+            device.create_shader(grr::ShaderStage::Fragment, ShaderSource::Glsl, bytes, ShaderFlags::VERBOSE)
         }.expect("Failed to compile shader");
 
         let pipeline = unsafe {
@@ -69,12 +94,27 @@ impl Painter {
                 grr::PipelineFlags::VERBOSE,
             ).expect("failed to create a egui graphics pipeline")
         };
+        let sampler = unsafe {
+            device.create_sampler(SamplerDesc {
+                min_filter: Filter::Linear,
+                mag_filter: Filter::Linear,
+                mip_map: None,
+                address: (SamplerAddress::ClampEdge, SamplerAddress::ClampEdge, SamplerAddress::ClampEdge),
+                lod_bias: 0.0,
+                lod: 0.0..10.0,
+                compare: None,
+                border_color: [0.0, 0.0, 0.0, 1.0],
+            })
+        }.expect("err sampler");
 
         unsafe {
             device.delete_shaders(&[vertex_shader, fragment_shader]);
         }
 
         Painter {
+            ibo,
+            vbo,
+            sampler,
             max_texture_side,
             pipeline,
             vertex_array,
@@ -112,7 +152,7 @@ impl Painter {
     ) {
         debug_assert!(mesh.is_valid());
 
-        let vertex_buffer = {
+         {
             #[repr(C)]
             #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
             struct Vertex {
@@ -124,11 +164,13 @@ impl Painter {
             let vertices: &[Vertex] = bytemuck::cast_slice(&mesh.vertices);
 
             // TODO: we should probably reuse the `VertexBuffer` instead of allocating a new one each frame.
-            unsafe { device.create_buffer_from_host(bytemuck::cast_slice(vertices), MemoryFlags::DYNAMIC) }.expect("could not create the vertex buffer for egui")
+            unsafe { device.copy_host_to_buffer(self.vbo, 0, bytemuck::cast_slice(vertices))}
         };
+        let vertex_buffer = self.vbo;
 
         // TODO: we should probably reuse the `IndexBuffer` instead of allocating a new one each frame.
-        let index_buffer = unsafe { device.create_buffer_from_host(&bytemuck::cast_slice(&mesh.indices), MemoryFlags::DYNAMIC).unwrap() };
+        let index_buffer = self.ibo;
+        unsafe { device.copy_host_to_buffer(self.ibo, 0, bytemuck::cast_slice(&mesh.indices)) }
         let (width_in_pixels, height_in_pixels) = (dimensions[0], dimensions[1]);
         let width_in_points = width_in_pixels as f32 / pixels_per_point;
         let height_in_points = height_in_pixels as f32 / pixels_per_point;
@@ -143,7 +185,8 @@ impl Painter {
                     layers: 0..1,
                 })
             }.unwrap();
-
+            //TODO: annoying
+            // PERFORMANCE_WARNING: "Texture state usage warning: The texture object (0) bound to texture image unit 0 does not have a defined base level and cannot be used for texture mapping." ??
             let screen_size = [width_in_points, height_in_points];
 
 
@@ -173,20 +216,6 @@ impl Painter {
             let clip_min_y = clip_min_y.round() as u32;
             let clip_max_x = clip_max_x.round() as u32;
             let clip_max_y = clip_max_y.round() as u32;
-
-
-            let sampler = unsafe {
-                device.create_sampler(SamplerDesc {
-                    min_filter: Filter::Linear,
-                    mag_filter: Filter::Linear,
-                    mip_map: None,
-                    address: (SamplerAddress::ClampEdge, SamplerAddress::ClampEdge, SamplerAddress::ClampEdge),
-                    lod_bias: 0.0,
-                    lod: 0.0..10.0,
-                    compare: None,
-                    border_color: [0.0, 0.0, 0.0, 1.0],
-                })
-            }.expect("err sampler");
 
 
             unsafe {
@@ -222,6 +251,7 @@ impl Painter {
                     }]
                 });
 
+                let sampler = self.sampler;
 
                 device.bind_vertex_array(self.vertex_array);
                 device.bind_vertex_buffers(self.vertex_array, 0, &[VertexBufferView {
@@ -231,16 +261,17 @@ impl Painter {
                     input_rate: grr::InputRate::Vertex,
                 }]);
                 device.bind_uniform_constants(self.pipeline, 0, &[Constant::Vec2(screen_size)]);
+
                 device.bind_samplers(0, &[sampler]);
                 device.bind_image_views(0, &[view]);
 
                 device.bind_index_buffer(self.vertex_array, index_buffer);
                 device.draw_indexed(grr::Primitive::Triangles, grr::IndexTy::U32, 0..(*&mesh.indices.len() as u32), 0..1, 0);
-            }
-            unsafe {
-                device.delete_buffers(&[vertex_buffer, index_buffer]);
-                device.delete_sampler(sampler);
+
                 device.delete_image_view(view);
+                device.clear_buffer(vertex_buffer, Format::R8_UNORM, BaseFormat::R, FormatLayout::U8, None);
+                device.clear_buffer(index_buffer, Format::R8_UNORM, BaseFormat::R, FormatLayout::U8, None);
+
             }
         }
     }
