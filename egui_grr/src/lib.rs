@@ -1,7 +1,11 @@
-use crate::painter::{Painter, PainterSettings};
 use egui_winit::*;
 
 mod painter;
+
+pub use self::painter::{
+    Painter,
+    PainterSettings
+};
 
 pub struct EguiGrr {
     pub egui_ctx: egui::Context,

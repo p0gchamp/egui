@@ -29,8 +29,8 @@ pub struct PainterSettings{
 impl std::default::Default for PainterSettings {
     fn default() -> Self {
         Self{
-            ibo_size: 2048,
-            vbo_size: 4096
+            ibo_size: 10000,
+            vbo_size: 10000
         }
     }
 }
@@ -151,7 +151,9 @@ impl Painter {
         mesh: &Mesh,
     ) {
         debug_assert!(mesh.is_valid());
-
+        if !mesh.is_valid(){
+            return;
+        }
          {
             #[repr(C)]
             #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -167,7 +169,7 @@ impl Painter {
             unsafe { device.copy_host_to_buffer(self.vbo, 0, bytemuck::cast_slice(vertices))}
         };
         let vertex_buffer = self.vbo;
-
+        let indices = &mesh.indices.len();
         // TODO: we should probably reuse the `IndexBuffer` instead of allocating a new one each frame.
         let index_buffer = self.ibo;
         unsafe { device.copy_host_to_buffer(self.ibo, 0, bytemuck::cast_slice(&mesh.indices)) }
@@ -266,7 +268,7 @@ impl Painter {
                 device.bind_image_views(0, &[view]);
 
                 device.bind_index_buffer(self.vertex_array, index_buffer);
-                device.draw_indexed(grr::Primitive::Triangles, grr::IndexTy::U32, 0..(*&mesh.indices.len() as u32), 0..1, 0);
+                device.draw_indexed(grr::Primitive::Triangles, grr::IndexTy::U32, 0..(*indices as u32), 0..1, 0);
 
                 device.delete_image_view(view);
                 device.clear_buffer(vertex_buffer, Format::R8_UNORM, BaseFormat::R, FormatLayout::U8, None);
